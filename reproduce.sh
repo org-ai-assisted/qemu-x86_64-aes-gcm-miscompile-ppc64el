@@ -123,46 +123,52 @@ main() {
    fi
    cp -- /etc/resolv.conf "$rootfs/etc/resolv.conf" 2>/dev/null || true
 
-   ## Deterministic, network-free check first.
+   ## Both checks run to completion; the summary + verdict come at the end.
+
+   ## --- Check 1: deterministic AES-256-ECB known-answer test (no network) ---
    local kat_expected="f3eed1bdb5d2a03c064b5a7e3db181f8"
    local kat_default kat_software
    kat_default="$(run_kat "$rootfs")"
    kat_software="$(run_kat "$rootfs" OPENSSL_ia32cap=0)"
    info "AES-256-ECB KAT: expected=$kat_expected default=$kat_default software=$kat_software"
-   ## Self-validate first: software crypto MUST give the correct answer. If it
-   ## does not, the guest openssl / rootfs is broken -- an environment problem,
-   ## not the qemu bug -- so do not misattribute it.
+   ## Self-validate: software crypto MUST be correct. If not, the guest openssl
+   ## / rootfs is broken (an environment problem), not the qemu bug.
    if [ "$kat_software" != "$kat_expected" ]; then
       error "Environment problem: software-crypto AES-256-ECB is wrong
 ($kat_software, expected $kat_expected); the guest openssl or rootfs is broken,
 not the target qemu bug."
    fi
-   if [ "$kat_default" != "$kat_expected" ]; then
-      error "Bug reproduces: AES-256-ECB is wrong under hardware AES-NI
-($kat_default, expected $kat_expected) but correct with software crypto --
-qemu-x86_64 mis-emulates the AES-NI round instructions."
-   fi
+   local kat_bug="no"
+   [ "$kat_default" = "$kat_expected" ] || kat_bug="yes"
 
-   info "Handshake with DEFAULT (hardware) crypto ..."
-   local mac_default
-   mac_default="$(run_one "$rootfs" "default crypto")"
-
-   info "Handshake with OPENSSL_ia32cap=0 (software crypto) ..."
-   local mac_software
-   mac_software="$(run_one "$rootfs" "OPENSSL_ia32cap=0" OPENSSL_ia32cap=0)"
-
-   info "bad-record-mac count: default=$mac_default software=$mac_software"
+   ## --- Check 2: real AES-256-GCM TLS 1.3 handshake (corroboration) ---
+   local mac_default mac_software tls
+   mac_default="$(run_one "$rootfs" "TLS, hardware crypto")"
+   mac_software="$(run_one "$rootfs" "TLS, OPENSSL_ia32cap=0" OPENSSL_ia32cap=0)"
+   info "TLS AES-256-GCM bad-record-mac count: default=$mac_default software=$mac_software"
    if [ "$mac_default" != "0" ] && [ "$mac_software" = "0" ]; then
-      error "Bug reproduces: AES-GCM fails with hardware crypto but works with
-software crypto -- qemu-x86_64 mis-emulates the AES-NI round instructions."
+      tls="bad record mac with hardware crypto, clean with software crypto"
+   elif [ "$mac_default" != "0" ]; then
+      tls="both paths failed -- likely a network/TLS issue, inconclusive"
+   else
+      tls="clean"
    fi
-   if [ "$mac_default" = "0" ]; then
-      info "No bad record mac with hardware crypto -- the bug does NOT reproduce
-in this environment (qemu may be fixed, or crypto instructions unused)."
-      return 0
+
+   ## --- Summary + verdict (the deterministic KAT decides) ---
+   local kat_line
+   if [ "$kat_bug" = "yes" ]; then kat_line="WRONG ($kat_default)"; else kat_line="correct"; fi
+   {
+      printf -- '================ summary ================\n'
+      printf 'AES-256-ECB (hardware AES-NI): %s\n' "$kat_line"
+      printf 'AES-256-GCM TLS handshake:     %s\n' "$tls"
+      printf -- '=========================================\n'
+   } >&2
+   if [ "$kat_bug" = "yes" ]; then
+      printf 'VERDICT: bug REPRODUCES -- qemu-x86_64 mis-emulates the AES-NI round instructions on this host (hardware crypto wrong; OPENSSL_ia32cap=0 software crypto correct).\n' >&2
+      return 1
    fi
-   error "Unexpected: software crypto also failed; environment problem, not the
-target bug."
+   printf 'VERDICT: bug does NOT reproduce -- hardware AES-NI is correct here (qemu fixed, or the instructions were not exercised).\n' >&2
+   return 0
 }
 
 main "$@"
