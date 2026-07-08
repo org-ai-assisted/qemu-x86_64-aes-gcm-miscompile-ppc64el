@@ -86,9 +86,28 @@ AES-256-GCM TLS handshake, with the `OPENSSL_ia32cap=0` discriminator.
 
 ## Submitting upstream
 
-Not found reported upstream as of 2026-07-08. To post the patch to qemu-devel,
-set the commit author to yourself and add your own `Signed-off-by` per qemu's
-DCO (the included patch carries a placeholder author).
+Not found reported upstream as of 2026-07-08. QEMU splits bugs and patches
+across two channels, and does NOT use GitLab merge requests or GitHub PRs:
+
+- **Bug** -> file a GitLab issue at
+  <https://gitlab.com/qemu-project/qemu/-/issues>.
+- **Patch** -> email it to `qemu-devel@nongnu.org` via `git send-email` (do not
+  attach it to the issue). Set the commit author to yourself, add your own
+  `Signed-off-by` per QEMU's DCO (the included patch carries a placeholder
+  author), and add a `Resolves: <issue-URL>` trailer to link the issue.
+
+Before sending, note QEMU's code-provenance policy
+(<https://www.qemu.org/docs/master/devel/code-provenance.html>): as of
+2026-07-08 the merged policy DECLINES contributions "believed to include or
+derive from AI generated content" (Anthropic's Claude is named explicitly), and
+the DCO `Signed-off-by` certifies the human author takes responsibility for the
+ENTIRE patch. This reproducer and patch were AI-assisted, so they cannot be
+submitted silently under the current policy. Compliant options: have a human who
+genuinely authors and understands the change submit it under their own DCO;
+raise it on qemu-devel and request an exception; or track the proposed (not yet
+merged, May 2026) relaxation that would permit small (<=20-line) fixes with an
+`AI-used-for: code` disclosure trailer. Re-check code-provenance.rst on master
+before sending, as the policy is in flux.
 
 ## Files
 
