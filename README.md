@@ -14,8 +14,8 @@ This README doubles as the write-up for qemu-devel. The fix is
 
 ## Symptom (deterministic, no network)
 
-FIPS-197 AES-256-ECB known-answer test through an amd64 OpenSSL under
-`qemu-x86_64`:
+NIST SP 800-38A F.1 AES-256-ECB known-answer test through an amd64 OpenSSL
+under `qemu-x86_64`:
 
 - key `603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4`,
   plaintext block `6bc1bee22e409f96e93d7e117393172a`

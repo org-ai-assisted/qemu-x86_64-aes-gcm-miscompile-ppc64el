@@ -11,7 +11,7 @@ memory order WITHOUT the byte-reversal that vcipher/vcipherlast require.
 The AES round instructions then operate on wrongly-ordered data and
 produce incorrect results. On a ppc64le (POWER9) host running a Debian
 POWER8-baseline build, an x86_64 guest's AES-NI (aesenc/aesenclast, and
-thus AES-GCM) computes wrong output: e.g. the FIPS-197 AES-256-ECB
+thus AES-GCM) computes wrong output: e.g. the NIST SP 800-38A AES-256-ECB
 vector 6bc1..172a encrypts to a280f0f6..bdf8 instead of f3eed1bd..81f8,
 which surfaces to guests as OpenSSL TLS "bad record mac".
 
@@ -47,7 +47,7 @@ index 8062d2a537..a4be22be61 100644
 + * is only correct here via the POWER9 lxvb16x/stxvb16x instructions: the
 + * POWER8 fallback (lxvd2x + xxpermdi) loads the 128-bit state in natural memory
 + * order WITHOUT the required byte-reversal, so vcipher processes wrongly ordered
-+ * data and produces incorrect AES results (verified against FIPS-197 KATs).
++ * data and produces incorrect AES results (verified by a known-answer test).
 + * Only enable the acceleration where that reversal is correct -- big-endian
 + * hosts, or little-endian hosts with the POWER9 byte-indexed loads -- and fall
 + * back to the generic C implementation otherwise.
