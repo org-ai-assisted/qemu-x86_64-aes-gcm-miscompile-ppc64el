@@ -1,0 +1,61 @@
+From 3f957eef5eb99b7011a70e3376832c9c478773f9 Mon Sep 17 00:00:00 2001
+From: qemu-ppc64-aes-fix <noreply@localhost>
+Date: Wed, 8 Jul 2026 09:12:49 +0000
+Subject: [PATCH] host/include/ppc64: Fix AES acceleration on little-endian
+ POWER8
+
+The little-endian aes_accel_ld/aes_accel_st fallback for hosts without
+lxvb16x/stxvb16x (i.e. built without __POWER9_VECTOR__) uses
+"lxvd2x + xxpermdi 2", which loads the 128-bit AES state in natural
+memory order WITHOUT the byte-reversal that vcipher/vcipherlast require.
+The AES round instructions then operate on wrongly-ordered data and
+produce incorrect results. On a ppc64le (POWER9) host running a Debian
+POWER8-baseline build, an x86_64 guest's AES-NI (aesenc/aesenclast, and
+thus AES-GCM) computes wrong output: e.g. the FIPS-197 AES-256-ECB
+vector 6bc1..172a encrypts to a280f0f6..bdf8 instead of f3eed1bd..81f8,
+which surfaces to guests as OpenSSL TLS "bad record mac".
+
+A native check confirms the idiom: loading bytes 00..0f, "lxvd2x +
+xxpermdi 2" yields 00..0f (identity) whereas the correct lxvb16x yields
+0f..00 (full byte-reversal).
+
+Only enable the acceleration where the byte-reversing load/store is
+correct: big-endian hosts, or little-endian hosts with the POWER9
+byte-indexed instructions; otherwise fall back to the generic C
+implementation. Verified on a POWER9 host: with the fix an x86_64
+guest's AES KAT and AES-GCM TLS handshake pass under a default
+(POWER8-baseline) build, and a -mcpu=power9 build keeps the correct
+lxvb16x acceleration.
+
+Reproduces on qemu 10.0.8, 10.2.0 and master.
+---
+ host/include/ppc64/host/crypto/aes-round.h | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/host/include/ppc64/host/crypto/aes-round.h b/host/include/ppc64/host/crypto/aes-round.h
+index 8062d2a537..a4be22be61 100644
+--- a/host/include/ppc64/host/crypto/aes-round.h
++++ b/host/include/ppc64/host/crypto/aes-round.h
+@@ -6,7 +6,18 @@
+ #ifndef PPC_HOST_CRYPTO_AES_ROUND_H
+ #define PPC_HOST_CRYPTO_AES_ROUND_H
+ 
+-#ifdef __ALTIVEC__
++/*
++ * On a little-endian host the AES state must be byte-reversed into the vector
++ * register before vcipher/vcipherlast operate on it. That reversing load/store
++ * is only correct here via the POWER9 lxvb16x/stxvb16x instructions: the
++ * POWER8 fallback (lxvd2x + xxpermdi) loads the 128-bit state in natural memory
++ * order WITHOUT the required byte-reversal, so vcipher processes wrongly ordered
++ * data and produces incorrect AES results (verified against FIPS-197 KATs).
++ * Only enable the acceleration where that reversal is correct -- big-endian
++ * hosts, or little-endian hosts with the POWER9 byte-indexed loads -- and fall
++ * back to the generic C implementation otherwise.
++ */
++#if defined(__ALTIVEC__) && (HOST_BIG_ENDIAN || defined(__POWER9_VECTOR__))
+ #include "host/cpuinfo.h"
+ 
+ #ifdef __CRYPTO__
+-- 
+2.47.3
+
