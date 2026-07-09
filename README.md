@@ -10,7 +10,7 @@ error:0A000119:SSL routines:tls_get_more_records:decryption failed or bad record
 ```
 
 This README doubles as the write-up for qemu-devel. The fix is
-`0001-host-include-ppc64-Fix-AES-acceleration-on-little-endian-POWER8.patch`.
+`0001-host-include-ppc64-Fix-little-endian-POWER8-AES-byte-order.patch`.
 
 ## Symptom (deterministic, no network)
 
@@ -49,26 +49,53 @@ POWER9 hardware. Reproduces on qemu 10.0.8, 10.2.0, and git master.
 
 ## Fix
 
-Enable the acceleration only where the byte-reversing load/store is correct:
+Complete the missing byte-reversal on the POWER8 path instead of disabling
+the acceleration. After the `lxvd2x` + `xxpermdi` that corrects the doubleword
+order, add a `vperm` that reverses the 16 bytes on load; the store does the
+inverse before `xxpermdi` + `stxvd2x`:
 
 ```
--#ifdef __ALTIVEC__
-+#if defined(__ALTIVEC__) && (HOST_BIG_ENDIAN || defined(__POWER9_VECTOR__))
+ #else
++        AESStateVec rev = { 0, 1, 2, ... , 15 };
+         asm("lxvd2x %x0, 0, %1\n\t"
+-            "xxpermdi %x0, %x0, %x0, 2"
+-            : "=v"(r) : "r"(p), "m"(*p));
++            "xxpermdi %x0, %x0, %x0, 2\n\t"
++            "vperm %0, %0, %0, %2"
++            : "=v"(r) : "r"(p), "v"(rev), "m"(*p));
+ #endif
 ```
 
-(plus an explanatory comment; see the patch). Little-endian POWER8-baseline
-builds then use the correct generic C AES; `-mcpu=power9` builds keep the
-correct `lxvb16x` acceleration. A follow-up could restore POWER8 acceleration
-with a correct byte-reversing load -- GCC's `vec_xl_be` produces the right
-result, and a raw `lxvd2x` + `vperm` would too, but with a non-obvious mask
-(the naive `{15..0}` permute does not work), so it needs care.
+This keeps the vector AES acceleration on little-endian POWER8-baseline
+builds; `-mcpu=power9` builds still use the correct `lxvb16x` path.
+
+The reversal selector is the **ascending** `{0..15}` on a little-endian host
+-- that is what raw `vperm` consumes to fully reverse the 16 bytes. (The
+descending `{15..0}` belongs to the big-endian branch above and is a no-op
+here: raw `vperm` is not the endianness-aware `vec_perm` builtin, so the
+selector convention flips on LE. `vec_xl_be`/`vec_xst_be` also give the
+correct result and are an equally valid, more readable alternative; the
+raw-asm form is kept to match the surrounding code, which deliberately avoids
+the altivec builtins.)
+
+A more conservative alternative -- if one would rather not touch the POWER8
+codegen -- is the one-line guard `#if defined(__ALTIVEC__) && (HOST_BIG_ENDIAN
+|| defined(__POWER9_VECTOR__))`, which disables the acceleration on this path
+and falls back to the correct generic C AES. It is smaller and trivially safe
+but gives up POWER8 acceleration, so the byte-reversal fix above is preferred.
 
 ## Verification (POWER9 / ppc64le host)
 
-With the patch, a default (POWER8-baseline) build of `qemu-x86_64`, under
-DEFAULT crypto (no `OPENSSL_ia32cap` override):
+Verified on a POWER9 (ppc64le) host by building `qemu-x86_64` from qemu
+**v10.0.8** at the DEFAULT (POWER8) baseline -- confirmed the compiled binary
+contains no `lxvb16x`, i.e. it takes the buggy path -- then running an amd64
+OpenSSL under it. Before the patch the KAT gives the wrong `a280f0f6..bdf8`;
+after the patch, under DEFAULT crypto (no `OPENSSL_ia32cap` override):
 
-- AES-256-ECB KAT: `f3eed1...81f8` (correct).
+- AES-128/192/256-ECB known-answer vectors (NIST SP 800-38A): all correct,
+  encrypt and decrypt (the decrypt path exercises `vncipher` too).
+- AES-256-ECB, all four F.1 blocks: `f3eed1..81f8 591ccb..2870 b6ed21..ed1d
+  23304b..ecc7` (correct).
 - AES-256-GCM TLS 1.3 handshake: `Verify return code: 0`, no "bad record mac".
 
 A `-mcpu=power9` build also passes (keeps the correct `lxvb16x` acceleration).
@@ -111,6 +138,6 @@ before sending, as the policy is in flux.
 
 ## Files
 
-- `0001-host-include-ppc64-Fix-AES-acceleration-on-little-endian-POWER8.patch`
+- `0001-host-include-ppc64-Fix-little-endian-POWER8-AES-byte-order.patch`
 - `reproduce.sh`
 - `LICENSE` (CC0)
